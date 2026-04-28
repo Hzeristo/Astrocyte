@@ -7,7 +7,6 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-const APP_DIR: &str = "chimera";
 const SCRATCHPAD_FILE: &str = "scratchpad.json";
 
 /// JSON 与前端契约：camelCase 键名（Tauri IPC / WebView）。`alias` 兼容旧版 `scratchpad.json` 的 snake_case。
@@ -36,11 +35,7 @@ pub fn scratchpad_now_iso8601() -> String {
 }
 
 pub fn get_scratchpad_file_path() -> Result<PathBuf, String> {
-    let mut path = dirs::data_local_dir()
-        .ok_or_else(|| "cannot find OS local data directory".to_string())?;
-    path.push(APP_DIR);
-    path.push(SCRATCHPAD_FILE);
-    Ok(path)
+    Ok(crate::platform::get_chimera_root()?.join(SCRATCHPAD_FILE))
 }
 
 /// Loads notes from `scratchpad.json`. Returns `[]` if the file is missing or invalid.

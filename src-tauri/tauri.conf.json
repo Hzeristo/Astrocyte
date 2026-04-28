@@ -15,6 +15,7 @@
         "title": "astrocyte",
         "width": 800,
         "height": 900,
+        "resizable": true,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

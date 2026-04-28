@@ -315,7 +315,7 @@
     display: flex;
     flex-direction: column;
     background: transparent !important;
-    color: #bb9af7;
+    color: var(--astrocyte-neural-purple);
     overflow: visible;
     box-sizing: border-box;
     pointer-events: none;
@@ -385,13 +385,13 @@
     pointer-events: none;
     background: linear-gradient(
       180deg,
-      rgba(187, 154, 247, 0.1) 0%,
+      var(--astrocyte-purple-a-10) 0%,
       rgba(211, 184, 255, 0.9) 50%,
-      rgba(187, 154, 247, 0.1) 100%
+      var(--astrocyte-purple-a-10) 100%
     );
     background-size: 100% 200%;
     box-shadow:
-      0 0 6px rgba(187, 154, 247, 0.5),
+      0 0 6px var(--astrocyte-purple-a-50),
       0 0 12px rgba(150, 100, 255, 0.3),
       0 0 25px rgba(120, 80, 200, 0.15);
     animation: energyFlow 4s linear infinite;
@@ -427,7 +427,7 @@
   .timeline-node {
     position: relative;
     width: 100%;
-    min-height: 14px;
+    min-height: var(--space-4);
     cursor: pointer;
     margin-bottom: 8px;
     pointer-events: auto;
@@ -435,14 +435,14 @@
 
   .dot {
     position: absolute;
-    right: calc((38px - 10px) / 2);
+    right: calc((38px - var(--space-3)) / 2);
     top: 50%;
     transform: translateY(-50%);
-    width: 10px;
-    height: 10px;
-    background: #ffffff;
+    width: var(--space-3);
+    height: var(--space-3);
+    background: var(--surface-bright);
     border-radius: 50%;
-    box-shadow: 0 0 8px #fff, 0 0 16px #bb9af7;
+    box-shadow: 0 0 8px #fff, 0 0 16px var(--astrocyte-neural-purple);
     transition:
       transform 0.2s,
       background 0.2s;
@@ -451,27 +451,27 @@
 
   .timeline-node:hover .dot,
   .timeline-node:focus-visible .dot {
-    background: #bb9af7;
+    background: var(--astrocyte-neural-purple);
     transform: translateY(-50%) scale(1.6);
     box-shadow:
-      0 0 15px #bb9af7,
-      0 0 30px #bb9af7;
+      0 0 15px var(--astrocyte-neural-purple),
+      0 0 30px var(--astrocyte-neural-purple);
   }
 
   .tooltip-float {
     position: fixed;
     width: 200px;
     max-height: 120px;
-    padding: 8px;
+    padding: var(--space-2);
     border-radius: 6px;
-    background: rgba(15, 12, 22, 0.85);
+    background: var(--surface-floating);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(187, 154, 247, 0.3);
+    border: 1px solid var(--astrocyte-purple-a-30);
     color: #a9b1d6;
     opacity: 0;
     pointer-events: none;
-    transform: translateY(-50%) translateX(10px);
+    transform: translateY(-50%) translateX(var(--space-3));
     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     z-index: 200;
     overflow-y: auto;
@@ -511,7 +511,7 @@
     position: absolute;
     top: 3px;
     right: 3px;
-    padding: 1px 5px;
+    padding: 1px var(--space-1);
     font-size: 9px;
     font-weight: bold;
     color: rgba(255, 255, 255, 0.35);
@@ -526,7 +526,7 @@
 
   .tooltip-delete:hover {
     color: #ff6b6b;
-    background: rgba(255, 107, 107, 0.15);
+    background: var(--surface-danger-surface);
   }
 
   .timeline-btn {
@@ -536,7 +536,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    color: #bb9af7;
+    color: var(--astrocyte-neural-purple);
     cursor: pointer;
     overflow: hidden;
     padding: 0;

@@ -53,9 +53,7 @@ When requirements are unclear, ask short, high-value clarification questions.
 "#;
 
 fn personas_file_path() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| "unable to resolve OS local data directory".to_string())?;
-    Ok(base.join("chimera_personas.json"))
+    Ok(crate::platform::get_chimera_root()?.join("chimera_personas.json"))
 }
 
 fn default_personas() -> Vec<PersonaConfig> {

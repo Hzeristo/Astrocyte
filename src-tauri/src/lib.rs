@@ -16,17 +16,48 @@ mod llm_client;
 mod memory;
 mod scratchpad;
 mod scratchpad_commands;
+mod skill_stats;
 mod skills;
+mod stage_stats;
 mod persona;
+pub mod config;
+pub mod platform;
 mod settings;
 mod state;
 use persona::{PersonaConfig, PersonaSnapshot};
-use serde::Deserialize;
-use settings::{save_astrocyte_config, AstrocyteConfig, ProviderConfig};
-use skills::SkillDefinition;
+use serde::{Deserialize, Serialize};
+use config::ChimeraConfig;
+use settings::{
+    normalize_astrocyte_with_chimera, resolve_active_provider_runtime, save_astrocyte_config,
+    AstrocyteConfig,
+};
+use skills::SkillWithStats;
 use state::{AstrocyteState, Message};
 
 /// Payload for syncing session history with persistence (includes ids for delete/edit).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmitSegmentFeedback {
+    conversation_id: String,
+    stage: String,
+    tool_name: Option<String>,
+    decision: Option<String>,
+    rating: String,
+    reason: Option<String>,
+}
+
+#[tauri::command]
+fn submit_segment_feedback(payload: SubmitSegmentFeedback) -> Result<(), String> {
+    stage_stats::record_segment_feedback(
+        &payload.conversation_id,
+        &payload.stage,
+        payload.tool_name.as_deref(),
+        payload.decision.as_deref(),
+        &payload.rating,
+        payload.reason.as_deref(),
+    )
+}
+
 #[derive(Deserialize)]
 struct SyncEntry {
     id: String,
@@ -67,55 +98,146 @@ async fn get_config(state: tauri::State<'_, AstrocyteState>) -> Result<Astrocyte
     Ok(state.config.read().await.clone())
 }
 
-#[tauri::command]
-async fn save_provider(
-    provider: ProviderConfig,
-    state: tauri::State<'_, AstrocyteState>,
-) -> Result<(), String> {
-    let normalized = provider.normalized();
-    normalized.validate()?;
-
-    let mut config = state.config.read().await.clone();
-    if let Some(existing) = config
-        .providers
-        .iter_mut()
-        .find(|existing| existing.id == normalized.id)
-    {
-        *existing = normalized.clone();
-    } else {
-        config.providers.push(normalized.clone());
-    }
-    if config.active_provider_id.is_none() {
-        config.active_provider_id = Some(normalized.id.clone());
-    }
-
-    save_astrocyte_config(&config)?;
-    let mut guard = state.config.write().await;
-    *guard = config;
-    Ok(())
+/// 与 `crucible_core` `TaskService` 落盘 JSON 对齐；供 Miner 任务轮询（避免再走 Oligo 流式通道）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackgroundTaskStatus {
+    id: String,
+    #[serde(rename = "type")]
+    task_type: String,
+    status: String,
+    progress: f64,
+    result: Option<String>,
+    error: Option<String>,
 }
 
 #[tauri::command]
-async fn delete_provider(id: String, state: tauri::State<'_, AstrocyteState>) -> Result<(), String> {
-    let provider_id = id.trim();
-    if provider_id.is_empty() {
-        return Err("provider id is empty".to_string());
+fn get_background_task_status(task_id: String) -> Result<BackgroundTaskStatus, String> {
+    let tid = task_id.trim();
+    if tid.is_empty() {
+        return Err("task_id is empty".to_string());
     }
-
-    let mut config = state.config.read().await.clone();
-    let before = config.providers.len();
-    config.providers.retain(|provider| provider.id != provider_id);
-    if config.providers.len() == before {
-        return Err(format!("provider '{}' not found", provider_id));
+    if tid.len() != 8 || !tid.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("invalid task_id".to_string());
     }
-
-    if config.active_provider_id.as_deref() == Some(provider_id) {
-        config.active_provider_id = config.providers.first().map(|provider| provider.id.clone());
+    let path = platform::get_chimera_root()?.join("tasks").join(format!("{tid}.json"));
+    if !path.is_file() {
+        return Err(format!("task file not found: {tid}"));
     }
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let id = v
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or(tid)
+        .to_string();
+    let task_type = v
+        .get("type")
+        .and_then(|x| x.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let status = v
+        .get("status")
+        .and_then(|x| x.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let progress = v
+        .get("progress")
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.0);
+    let result = v
+        .get("result")
+        .and_then(|x| x.as_str())
+        .map(String::from);
+    let error = v
+        .get("error")
+        .and_then(|x| x.as_str())
+        .map(String::from);
+    Ok(BackgroundTaskStatus {
+        id,
+        task_type,
+        status,
+        progress,
+        result,
+        error,
+    })
+}
 
-    save_astrocyte_config(&config)?;
-    let mut guard = state.config.write().await;
-    *guard = config;
+/// 与 `~/.chimera/config.toml` `[llm.providers.*]` 对齐，供 HUD 展示（含环境变量解析后的 apiKey）。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AvailableProvider {
+    id: String,
+    name: String,
+    api_key: String,
+    base_url: String,
+    model: String,
+    temperature: f64,
+    timeout_seconds: u64,
+}
+
+#[tauri::command]
+fn get_available_providers(state: tauri::State<'_, AstrocyteState>) -> Vec<AvailableProvider> {
+    let chimera = state.chimera.read().expect("chimera lock poisoned");
+    let merged = chimera.llm.merged_providers();
+    let mut out: Vec<AvailableProvider> = Vec::new();
+    for id in ["openai", "deepseek", "anthropic"] {
+        if let Some(slot) = merged.get(id) {
+            out.push(AvailableProvider {
+                id: id.to_string(),
+                name: if slot.name.trim().is_empty() {
+                    id.to_string()
+                } else {
+                    slot.name.clone()
+                },
+                api_key: settings::resolved_provider_api_key(id, slot),
+                base_url: slot.base_url.clone(),
+                model: slot.model.clone(),
+                temperature: slot.temperature,
+                timeout_seconds: slot.timeout_seconds,
+            });
+        }
+    }
+    for (id, slot) in &merged {
+        if matches!(id.as_str(), "openai" | "deepseek" | "anthropic") {
+            continue;
+        }
+        out.push(AvailableProvider {
+            id: id.clone(),
+            name: if slot.name.trim().is_empty() {
+                id.clone()
+            } else {
+                slot.name.clone()
+            },
+            api_key: settings::resolved_provider_api_key(id, slot),
+            base_url: slot.base_url.clone(),
+            model: slot.model.clone(),
+            temperature: slot.temperature,
+            timeout_seconds: slot.timeout_seconds,
+        });
+    }
+    out
+}
+
+/// 自磁盘重读 `~/.chimera/config.toml` 并刷新内存中的 Chimera 快照；必要时校正 `active_provider_id` 并写回 JSON。
+#[tauri::command]
+async fn reload_chimera_config(state: tauri::State<'_, AstrocyteState>) -> Result<(), String> {
+    let fresh = config::load_config()?;
+    {
+        let mut w = state
+            .chimera
+            .write()
+            .map_err(|_| "chimera config lock poisoned".to_string())?;
+        *w = fresh;
+    }
+    let chimera = state.chimera.read().expect("chimera lock poisoned").clone();
+    let mut ui = state.config.read().await.clone();
+    let before = ui.clone();
+    normalize_astrocyte_with_chimera(&mut ui, &chimera);
+    if ui != before {
+        save_astrocyte_config(&ui)?;
+        *state.config.write().await = ui;
+    }
     Ok(())
 }
 
@@ -129,14 +251,19 @@ async fn set_active_provider(
         return Err("provider id is empty".to_string());
     }
 
-    let mut config = state.config.read().await.clone();
-    if !config
-        .providers
-        .iter()
-        .any(|provider| provider.id == provider_id)
+    let chimera_snap = state.chimera.read().expect("chimera lock poisoned").clone();
+    if !chimera_snap
+        .llm
+        .merged_providers()
+        .contains_key(provider_id)
     {
-        return Err(format!("provider '{}' not found", provider_id));
+        return Err(format!(
+            "provider '{}' not found under [llm.providers] in ~/.chimera/config.toml",
+            provider_id
+        ));
     }
+
+    let mut config = state.config.read().await.clone();
     config.active_provider_id = Some(provider_id.to_string());
 
     save_astrocyte_config(&config)?;
@@ -174,8 +301,184 @@ async fn set_active_skill_id(
 }
 
 #[tauri::command]
-async fn get_available_skills() -> Result<Vec<SkillDefinition>, String> {
-    Ok(skills::load_all_skills())
+async fn get_available_skills() -> Result<Vec<SkillWithStats>, String> {
+    Ok(skills::load_all_skills_with_stats())
+}
+
+/// 用户在前端对 BB 回复标记满意/不满意时写入 `~/.chimera/skill_stats.json`（与 Python 服务同结构）。
+#[tauri::command]
+fn submit_skill_feedback(skill_id: String, success: bool, tokens: i32) -> Result<(), String> {
+    skill_stats::record_skill_feedback(&skill_id, success, tokens)
+}
+
+fn json_number_as_f64(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_u64().map(|n| n as f64))
+        .or_else(|| v.as_i64().map(|n| n as f64))
+}
+
+/// 与 `crucible_core` `MetricsService.get_summary` 对齐：从落盘 `metrics.json` 生成面板用摘要。
+fn summarize_chimera_metrics(raw: &serde_json::Value) -> serde_json::Value {
+    let total = raw
+        .get("total_requests")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let success = raw
+        .get("successful_requests")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let success_rate = if total > 0 {
+        success as f64 / total as f64
+    } else {
+        0.0
+    };
+    let avg_latency_ms = raw
+        .get("latencies")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            let nums: Vec<f64> = arr.iter().filter_map(json_number_as_f64).collect();
+            if nums.is_empty() {
+                0.0
+            } else {
+                nums.iter().sum::<f64>() / nums.len() as f64
+            }
+        })
+        .unwrap_or(0.0);
+    let total_tokens = raw
+        .get("total_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let mut top: Vec<(String, u64, u64)> = Vec::new();
+    if let Some(skills) = raw.get("skills").and_then(|v| v.as_object()) {
+        for (id, stats) in skills {
+            let count = stats
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let tokens = stats
+                .get("tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            top.push((id.clone(), count, tokens));
+        }
+    }
+    top.sort_by(|a, b| b.1.cmp(&a.1));
+    let top_skills: Vec<serde_json::Value> = top
+        .into_iter()
+        .take(5)
+        .map(|(id, count, tokens)| {
+            serde_json::json!({
+                "id": id,
+                "count": count,
+                "tokens": tokens,
+            })
+        })
+        .collect();
+
+    let tool_stats = tool_stats_from_raw(raw);
+    let wash_stats = wash_stats_from_raw(raw);
+
+    serde_json::json!({
+        "total_requests": total,
+        "success_rate": success_rate,
+        "avg_latency_ms": avg_latency_ms,
+        "total_tokens": total_tokens,
+        "top_skills": top_skills,
+        "tool_stats": tool_stats,
+        "wash_stats": wash_stats,
+    })
+}
+
+/// 与 `MetricsService.get_wash_stats` 对齐。
+fn wash_stats_from_raw(raw: &serde_json::Value) -> serde_json::Value {
+    let wash = raw.get("wash");
+    let Some(wash_obj) = wash.and_then(|v| v.as_object()) else {
+        return serde_json::json!({
+            "total_washes": 0u64,
+            "avg_compression_rate": 0.0,
+            "by_tool": serde_json::json!({}),
+        });
+    };
+    let total_original = wash_obj
+        .get("total_original_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total_washed = wash_obj
+        .get("total_washed_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total_washes = wash_obj
+        .get("total_washes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let avg_compression_rate = if total_original > 0 {
+        1.0 - (total_washed as f64 / total_original as f64)
+    } else {
+        0.0
+    };
+    let by_tool = wash_obj
+        .get("by_tool")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+    serde_json::json!({
+        "total_washes": total_washes,
+        "avg_compression_rate": avg_compression_rate,
+        "by_tool": by_tool,
+    })
+}
+
+/// 与 `MetricsService.get_tool_stats` 对齐。
+fn tool_stats_from_raw(raw: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(tools) = raw.get("tools").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<(u64, serde_json::Value)> = Vec::new();
+    for (tool_name, stats) in tools {
+        let count = stats.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let succ = stats.get("success").and_then(|v| v.as_u64()).unwrap_or(0);
+        let success_rate = if count > 0 {
+            succ as f64 / count as f64
+        } else {
+            0.0
+        };
+        let avg_latency_ms = stats
+            .get("latencies")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                let nums: Vec<f64> = arr.iter().filter_map(json_number_as_f64).collect();
+                if nums.is_empty() {
+                    0.0
+                } else {
+                    nums.iter().sum::<f64>() / nums.len() as f64
+                }
+            })
+            .unwrap_or(0.0);
+        rows.push((
+            count,
+            serde_json::json!({
+                "name": tool_name,
+                "count": count,
+                "success_rate": success_rate,
+                "avg_latency_ms": avg_latency_ms,
+            }),
+        ));
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.into_iter().map(|(_, v)| v).collect()
+}
+
+#[tauri::command]
+async fn get_system_metrics() -> Result<serde_json::Value, String> {
+    let metrics_path = crate::platform::get_chimera_root()?.join("metrics.json");
+    if !metrics_path.exists() {
+        return Ok(summarize_chimera_metrics(&serde_json::json!({})));
+    }
+    let content =
+        std::fs::read_to_string(&metrics_path).map_err(|e| format!("Failed to read metrics: {}", e))?;
+    let raw: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse metrics: {}", e))?;
+    Ok(summarize_chimera_metrics(&raw))
 }
 
 #[tauri::command]
@@ -392,10 +695,41 @@ fn persist_chat_entries_non_blocking(session_id: String, entries: Vec<ChatEntry>
         .await;
         match write_result {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => eprintln!("[astrocyte] memory append failed: {}", e),
-            Err(e) => eprintln!("[astrocyte] memory append task join failed: {}", e),
+            Ok(Err(e)) => eprintln!("[Astrocyte] memory append failed: {}", e),
+            Err(e) => eprintln!("[Astrocyte] memory append task join failed: {}", e),
         }
     });
+}
+
+/// 与 Oligo `ChimeraAgent` 的 Final System 一致：L1 基座 + skill，L2 Persona，L3 Author's Note（直连模式单条 system）。
+fn compose_prompt_injection_system(
+    system_core: &str,
+    skill_override: Option<&str>,
+    persona: Option<&str>,
+    authors_note: Option<&str>,
+) -> String {
+    let core = system_core.trim_end();
+    let sk = skill_override.map(str::trim).filter(|s| !s.is_empty());
+    let base = match &sk {
+        Some(s) if !core.is_empty() => format!("{core}\n\n{s}"),
+        Some(s) => s.to_string(),
+        None => core.to_string(),
+    };
+    let mut layers: Vec<String> = Vec::new();
+    if !base.is_empty() {
+        layers.push(base);
+    }
+    let p = persona.map(str::trim).filter(|s| !s.is_empty());
+    let core_norm = system_core.trim();
+    if let Some(text) = p {
+        if text != core_norm {
+            layers.push(format!("[PERSONA OVERRIDE]\n{text}"));
+        }
+    }
+    if let Some(note) = authors_note.map(str::trim).filter(|s| !s.is_empty()) {
+        layers.push(format!("[AUTHOR'S NOTE]\n{note}"));
+    }
+    layers.join("\n\n")
 }
 
 /// 双模式分流：is_oligo_mode → Oligo Agent；否则直连 API。
@@ -404,6 +738,7 @@ async fn evaluate_payload(
     payload: String,
     session_id: Option<String>,
     skill_id: Option<String>,
+    persona: Option<String>,
     user_message_id: Option<String>,
     assistant_message_id: Option<String>,
     state: tauri::State<'_, AstrocyteState>,
@@ -417,9 +752,13 @@ async fn evaluate_payload(
     let active_persona = state.active_persona.read().await.clone();
     let active_persona_id = active_persona.id.clone();
     let config = state.config.read().await.clone();
+    let chimera_snapshot = state.chimera.read().expect("chimera lock poisoned").clone();
     let is_oligo_mode = config.is_oligo_mode;
-    if is_oligo_mode && config.active_provider().is_none() {
-        return Err("No active provider selected".into());
+    if is_oligo_mode && resolve_active_provider_runtime(&config, &chimera_snapshot).is_none() {
+        return Err(
+            "No active provider or missing API key (configure ~/.chimera/config.toml [llm.providers] or env)"
+                .into(),
+        );
     }
     let effective_skill_id = skill_id
         .as_deref()
@@ -441,13 +780,25 @@ async fn evaluate_payload(
         .append_message_to_session(&session_id, "user", user_input.clone())
         .await?;
 
-    let mut system_core = active_persona.system_prompt.clone();
-    if let Some(note) = &active_persona.authors_note {
-        if !note.trim().is_empty() {
-            system_core.push_str("\n\n[AUTHOR_NOTE]: ");
-            system_core.push_str(note);
-        }
-    }
+    let system_core = active_persona.system_prompt.clone();
+
+    let session_persona = persona
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    // L3：仅随 Persona 持久化；不再接受 HUD 侧独立会话输入，避免与 active_persona.authors_note 竞态。
+    let effective_authors_note = active_persona
+        .authors_note
+        .as_ref()
+        .and_then(|n| {
+            let t = n.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(n.clone())
+            }
+        });
 
     let (skill_override, allowed_tools) =
         match effective_skill_id.as_deref().and_then(skills::load_skill) {
@@ -468,7 +819,7 @@ async fn evaluate_payload(
 
     if is_oligo_mode {
         info!(
-            "[astrocyte] Oligo skill payload: effective_skill_id={:?} skill_override={} allowed_tools={:?}",
+            "[Astrocyte] Oligo skill payload: effective_skill_id={:?} skill_override={} allowed_tools={:?}",
             effective_skill_id.as_deref(),
             skill_override.is_some(),
             allowed_tools
@@ -477,14 +828,20 @@ async fn evaluate_payload(
 
     let oligo_messages = build_oligo_transcript_messages(&history, &user_input);
 
-    let direct_messages =
-        build_direct_mode_messages(&active_persona, &history, &user_input);
-    let provider = config.active_provider().cloned();
+    let direct_messages = build_direct_mode_messages(
+        &system_core,
+        skill_override.as_deref(),
+        session_persona.as_deref(),
+        effective_authors_note.as_deref(),
+        &history,
+        &user_input,
+    );
+    let provider = resolve_active_provider_runtime(&config, &chimera_snapshot);
     let oligo_api_key = provider
         .as_ref()
         .map(|p| p.api_key.clone())
         .unwrap_or_default();
-    let oligo_base_url = provider
+    let provider_llm_base_url = provider
         .as_ref()
         .map(|p| p.base_url.clone())
         .unwrap_or_default();
@@ -492,10 +849,13 @@ async fn evaluate_payload(
         .as_ref()
         .map(|p| p.model_name.clone())
         .unwrap_or_default();
+    let oligo_temperature = provider.as_ref().and_then(|p| p.temperature);
 
     let app_handle = app.clone();
     let persona_id = active_persona.id.clone();
-    let system_core_for_oligo = system_core.clone();
+    let system_core_for_oligo = system_core;
+    let chimera = chimera_snapshot;
+    let oligo_gateway_base_url = settings::effective_oligo_base_url(&config, &chimera);
 
     let cancel_token = CancellationToken::new();
     {
@@ -504,15 +864,20 @@ async fn evaluate_payload(
     }
 
     tauri::async_runtime::spawn(async move {
-        let model_reply = if is_oligo_mode {
+        let model_reply: Result<Option<String>, String> = if is_oligo_mode {
             llm_client::stream_oligo_agent(
+                oligo_gateway_base_url.as_str(),
                 oligo_api_key,
-                oligo_base_url,
+                provider_llm_base_url,
                 oligo_model_name,
                 Some(persona_id),
                 system_core_for_oligo,
                 skill_override,
+                effective_skill_id.clone(),
                 allowed_tools,
+                session_persona,
+                effective_authors_note,
+                oligo_temperature,
                 oligo_messages,
                 &app_handle,
                 cancel_token.clone(),
@@ -539,10 +904,24 @@ async fn evaluate_payload(
                 cancel_token.clone(),
             )
             .await
+            .map(|s| Some(s))
         };
 
         let model_reply = match model_reply {
-            Ok(r) => r,
+            Ok(None) => {
+                clear_abort_slot(&app_handle).await;
+                let user_id = user_message_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+                let user_entries = vec![build_entry(
+                    user_id,
+                    "user",
+                    user_input.clone(),
+                    None,
+                    &session_id,
+                )];
+                persist_chat_entries_non_blocking(session_id.clone(), user_entries);
+                return;
+            }
+            Ok(Some(r)) => r,
             Err(e) if e == llm_client::GENERATION_ABORTED => {
                 clear_abort_slot(&app_handle).await;
                 let user_id = user_message_id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -561,7 +940,7 @@ async fn evaluate_payload(
                 return;
             }
             Err(e) => {
-                warn!("[astrocyte] stream request failed: {}", e);
+                warn!("[Astrocyte] stream request failed: {}", e);
                 clear_abort_slot(&app_handle).await;
                 let _ = app_handle.emit("bb-stream-chunk", e.clone());
                 let _ = app_handle.emit(
@@ -577,7 +956,7 @@ async fn evaluate_payload(
             .append_message_to_session(&session_id, "assistant", model_reply.clone())
             .await
         {
-            warn!("[astrocyte] append assistant message failed: {}", e);
+            warn!("[Astrocyte] append assistant message failed: {}", e);
         }
 
         let user_id = user_message_id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -623,14 +1002,17 @@ fn build_oligo_transcript_messages(history: &[Message], user_input: &str) -> Vec
 }
 
 fn build_direct_mode_messages(
-    persona: &PersonaConfig,
+    system_core: &str,
+    skill_override: Option<&str>,
+    persona: Option<&str>,
+    authors_note: Option<&str>,
     history: &[Message],
     user_input: &str,
 ) -> Vec<Message> {
-    let mut msgs = Vec::with_capacity(history.len() + 3);
+    let mut msgs = Vec::with_capacity(history.len() + 2);
     msgs.push(Message {
         role: "system".to_string(),
-        content: persona.system_prompt.clone(),
+        content: compose_prompt_injection_system(system_core, skill_override, persona, authors_note),
     });
     msgs.extend(
         history
@@ -640,14 +1022,6 @@ fn build_direct_mode_messages(
                 content: m.content.clone(),
             }),
     );
-    if let Some(note) = &persona.authors_note {
-        if !note.trim().is_empty() {
-            msgs.push(Message {
-                role: "system".to_string(),
-                content: format!("[AUTHOR_NOTE]: {}", note),
-            });
-        }
-    }
     msgs.push(Message {
         role: "user".to_string(),
         content: user_input.to_string(),
@@ -769,19 +1143,17 @@ async fn load_session_archive(
 
 #[tauri::command]
 async fn save_scratchpad(content: String) -> Result<(), String> {
-    let mut path = dirs::data_local_dir().ok_or("No local data dir found")?;
-    path.push("chimera");
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    path.push("scratchpad.md");
+    let path = crate::platform::get_chimera_root()?.join("scratchpad.md");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 async fn load_scratchpad() -> Result<String, String> {
-    let mut path = dirs::data_local_dir().ok_or("No local data dir found")?;
-    path.push("chimera");
-    path.push("scratchpad.md");
+    let path = crate::platform::get_chimera_root()?.join("scratchpad.md");
     if path.exists() {
         std::fs::read_to_string(&path).map_err(|e| e.to_string())
     } else {
@@ -966,8 +1338,29 @@ fn set_timeline_visible_internal(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let chimera = match config::load_config() {
+        Ok(c) => {
+            info!(
+                "[Astrocyte] Loaded Chimera TOML ({}) — Oligo {}",
+                platform::get_config_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|e| format!("<path error: {}>", e)),
+                c.oligo_agent_invoke_url()
+            );
+            c
+        }
+        Err(e) => {
+            warn!(
+                "[Astrocyte] Chimera TOML unavailable ({}); using defaults ({})",
+                e,
+                ChimeraConfig::default().oligo_agent_invoke_url()
+            );
+            ChimeraConfig::default()
+        }
+    };
+
     tauri::Builder::default()
-        .manage(AstrocyteState::new())
+        .manage(AstrocyteState::new(chimera))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_window_event(|window, event| {
@@ -982,8 +1375,11 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            if let Err(e) = platform::migrate_legacy_app_data() {
+                eprintln!("[Astrocyte] chimera path migration failed (non-fatal): {}", e);
+            }
             if let Err(e) = memory::ensure_migration() {
-                eprintln!("[astrocyte] legacy memory migration failed (non-fatal): {}", e);
+                eprintln!("[Astrocyte] legacy memory migration failed (non-fatal): {}", e);
             }
             // 注册全局快捷键 CommandOrControl+Space，失败时仅打印警告，不阻塞启动
             if let Err(e) = app.global_shortcut().on_shortcut(
@@ -996,23 +1392,23 @@ pub fn run() {
                         match window.is_visible() {
                             Ok(true) => {
                                 if let Err(e) = window.hide() {
-                                    eprintln!("[astrocyte] window.hide() failed: {}", e);
+                                    eprintln!("[Astrocyte] window.hide() failed: {}", e);
                                 }
                             }
                             Ok(false) => {
                                 if let Err(e) = window.show() {
-                                    eprintln!("[astrocyte] window.show() failed: {}", e);
+                                    eprintln!("[Astrocyte] window.show() failed: {}", e);
                                 } else if let Err(e) = window.set_focus() {
-                                    eprintln!("[astrocyte] window.set_focus() failed: {}", e);
+                                    eprintln!("[Astrocyte] window.set_focus() failed: {}", e);
                                 }
                             }
-                            Err(e) => eprintln!("[astrocyte] window.is_visible() failed: {}", e),
+                            Err(e) => eprintln!("[Astrocyte] window.is_visible() failed: {}", e),
                         }
                     }
                 },
             ) {
                 eprintln!(
-                    "[astrocyte] Failed to register global shortcut (Cmd/Ctrl+Space): {}. \
+                    "[Astrocyte] Failed to register global shortcut (Cmd/Ctrl+Space): {}. \
                      Hotkey may be in use by another app. Running without hotkey.",
                     e
                 );
@@ -1027,15 +1423,15 @@ pub fn run() {
                     }
 
                     let Some(window) = app.get_webview_window("main") else {
-                        eprintln!("[astrocyte] main window not found for clipboard hijack");
+                        eprintln!("[Astrocyte] main window not found for clipboard hijack");
                         return;
                     };
 
                     if let Err(e) = window.show() {
-                        eprintln!("[astrocyte] window.show() failed: {}", e);
+                        eprintln!("[Astrocyte] window.show() failed: {}", e);
                     }
                     if let Err(e) = window.set_focus() {
-                        eprintln!("[astrocyte] window.set_focus() failed: {}", e);
+                        eprintln!("[Astrocyte] window.set_focus() failed: {}", e);
                     }
 
                     let payload = match Clipboard::new() {
@@ -1043,29 +1439,29 @@ pub fn run() {
                             Ok(text) => {
                                 let trimmed = text.trim().to_string();
                                 if trimmed.is_empty() {
-                                    eprintln!("[astrocyte] clipboard text is empty, skip emit");
+                                    eprintln!("[Astrocyte] clipboard text is empty, skip emit");
                                     return;
                                 }
                                 trimmed
                             }
                             Err(e) => {
-                                eprintln!("[astrocyte] clipboard.get_text() failed: {}", e);
+                                eprintln!("[Astrocyte] clipboard.get_text() failed: {}", e);
                                 return;
                             }
                         },
                         Err(e) => {
-                            eprintln!("[astrocyte] Clipboard::new() failed: {}", e);
+                            eprintln!("[Astrocyte] Clipboard::new() failed: {}", e);
                             return;
                         }
                     };
 
                     if let Err(e) = window.emit("clipboard-hijack", payload) {
-                        eprintln!("[astrocyte] window.emit(clipboard-hijack) failed: {}", e);
+                        eprintln!("[Astrocyte] window.emit(clipboard-hijack) failed: {}", e);
                     }
                 },
             ) {
                 eprintln!(
-                    "[astrocyte] Failed to register global shortcut (Ctrl+Alt+Shift+C): {}. \
+                    "[Astrocyte] Failed to register global shortcut (Ctrl+Alt+Shift+C): {}. \
                      Clipboard hijack hotkey disabled.",
                     e
                 );
@@ -1078,12 +1474,16 @@ pub fn run() {
             process_signal,
             abort_generation,
             evaluate_payload,
+            get_background_task_status,
             set_is_oligo_mode,
             set_active_skill_id,
             get_available_skills,
+            submit_skill_feedback,
+            submit_segment_feedback,
             get_config,
-            save_provider,
-            delete_provider,
+            get_system_metrics,
+            get_available_providers,
+            reload_chimera_config,
             set_active_provider,
             get_personas,
             save_persona,

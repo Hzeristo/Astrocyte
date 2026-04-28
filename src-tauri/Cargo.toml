@@ -23,6 +23,7 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 reqwest-eventsource = "0.6"
@@ -35,6 +36,7 @@ env_logger = "0.11"
 regex = "1"
 tokio = { version = "1", features = ["time", "sync", "macros"] }
 tokio-util = "0.7"
+fs2 = "0.4"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"

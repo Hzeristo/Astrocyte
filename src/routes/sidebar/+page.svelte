@@ -359,12 +359,12 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    background: rgba(15, 12, 22, 0.65);
+    background: var(--surface-sidebar);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    border: 1px solid rgba(187, 154, 247, 0.2);
+    border: 1px solid var(--astrocyte-purple-a-20);
     border-radius: 12px;
-    color: #bb9af7;
+    color: var(--astrocyte-neural-purple);
     overflow: hidden;
     box-sizing: border-box;
   }
@@ -374,14 +374,14 @@
     height: 24px;
     width: 100%;
     -webkit-app-region: drag;
-    background: rgba(10, 10, 15, 0.92);
-    border-bottom: 1px solid rgba(187, 154, 247, 0.2);
+    background: var(--surface-chrome-92);
+    border-bottom: 1px solid var(--astrocyte-purple-a-20);
   }
 
   .sidebar-pomodoro {
     flex-shrink: 0;
-    padding: 16px 14px 14px;
-    border-bottom: 1px solid rgba(187, 154, 247, 0.16);
+    padding: var(--space-4) var(--space-4) var(--space-4);
+    border-bottom: 1px solid var(--astrocyte-purple-a-16);
   }
 
   .sidebar-timer {
@@ -391,7 +391,7 @@
     line-height: 1;
     letter-spacing: 0.04em;
     color: #6b5b8a;
-    margin-bottom: 14px;
+    margin-bottom: var(--space-4);
     transition:
       color 140ms ease,
       text-shadow 140ms ease;
@@ -400,17 +400,17 @@
   .sidebar-timer-presets {
     display: flex;
     justify-content: center;
-    gap: 6px;
-    margin-bottom: 10px;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
   }
 
   .sidebar-timer-presets button {
     background: transparent;
-    border: 1px solid rgba(187, 154, 247, 0.22);
-    color: rgba(187, 154, 247, 0.78);
+    border: 1px solid var(--astrocyte-purple-a-22);
+    color: var(--astrocyte-purple-a-78);
     font: inherit;
     font-size: 10px;
-    padding: 2px 6px;
+    padding: var(--radius-xs) var(--space-2);
     cursor: pointer;
     -webkit-app-region: no-drag;
     transition:
@@ -420,15 +420,15 @@
   }
 
   .sidebar-timer-presets button:hover:not(:disabled) {
-    border-color: rgba(187, 154, 247, 0.78);
+    border-color: var(--astrocyte-purple-a-78);
     color: #e0d3ff;
-    box-shadow: 0 0 8px rgba(187, 154, 247, 0.2);
+    box-shadow: 0 0 8px var(--astrocyte-purple-a-20);
   }
 
   .sidebar-timer-presets button.active {
-    border-color: rgba(187, 154, 247, 0.95);
+    border-color: var(--astrocyte-purple-a-95);
     color: #f1e7ff;
-    box-shadow: 0 0 10px rgba(187, 154, 247, 0.32);
+    box-shadow: 0 0 10px var(--astrocyte-purple-a-32);
   }
 
   .sidebar-timer-presets button:disabled {
@@ -441,33 +441,33 @@
   }
 
   .sidebar-timer.finished {
-    color: #bb9af7;
+    color: var(--astrocyte-neural-purple);
     animation: sidebar-timer-pulse 1s ease-in-out infinite;
   }
 
   @keyframes sidebar-timer-pulse {
     0%,
     100% {
-      text-shadow: 0 0 8px rgba(187, 154, 247, 0.35);
+      text-shadow: 0 0 8px var(--astrocyte-purple-a-35);
     }
     50% {
-      text-shadow: 0 0 22px rgba(187, 154, 247, 0.85);
+      text-shadow: 0 0 22px var(--astrocyte-purple-a-85);
     }
   }
 
   .sidebar-timer-controls {
     display: flex;
     justify-content: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .sidebar-timer-controls button {
     background: transparent;
-    border: 1px solid rgba(187, 154, 247, 0.25);
-    color: rgba(187, 154, 247, 0.86);
+    border: 1px solid var(--astrocyte-purple-a-25);
+    color: var(--astrocyte-purple-a-86);
     font: inherit;
     font-size: 11px;
-    padding: 4px 10px;
+    padding: var(--space-1) var(--space-3);
     cursor: pointer;
     -webkit-app-region: no-drag;
     transition:
@@ -477,8 +477,8 @@
   }
 
   .sidebar-timer-controls button:hover:not(:disabled) {
-    border-color: rgba(187, 154, 247, 0.82);
-    box-shadow: 0 0 10px rgba(187, 154, 247, 0.2);
+    border-color: var(--astrocyte-purple-a-82);
+    box-shadow: 0 0 10px var(--astrocyte-purple-a-20);
     color: #e0d3ff;
   }
 
@@ -494,8 +494,8 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    padding: 10px 12px 12px;
-    gap: 10px;
+    padding: var(--space-3) var(--space-3) var(--space-3);
+    gap: var(--space-3);
   }
 
   .mm-header {
@@ -518,22 +518,22 @@
     width: 100%;
     box-sizing: border-box;
     margin: 0;
-    padding: 8px 2px 10px;
+    padding: var(--space-2) var(--radius-xs) var(--space-3);
     background: transparent;
     border: none;
-    border-bottom: 1px solid rgba(187, 154, 247, 0.12);
+    border-bottom: 1px solid var(--astrocyte-purple-a-12);
     outline: none;
-    color: #d3b8ff;
+    color: var(--astrocyte-bb-fg);
     font: inherit;
     font-size: 13px;
     line-height: 1.35;
-    caret-color: #bb9af7;
+    caret-color: var(--astrocyte-neural-purple);
     -webkit-app-region: no-drag;
     transition: border-color 160ms ease;
   }
 
   .mm-capture:focus {
-    border-bottom-color: rgba(187, 154, 247, 0.35);
+    border-bottom-color: var(--astrocyte-purple-a-35);
   }
 
   .mm-capture::placeholder {
@@ -547,8 +547,8 @@
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 4px 2px 6px;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--radius-xs) var(--space-2);
     -webkit-app-region: no-drag;
     scroll-behavior: smooth;
   }
@@ -556,9 +556,9 @@
   .mm-card {
     flex-shrink: 0;
     border-radius: 8px;
-    border: 1px solid rgba(187, 154, 247, 0.1);
-    border-left: 2px solid rgba(187, 154, 247, 0.42);
-    background: rgba(20, 20, 25, 0.4);
+    border: 1px solid var(--astrocyte-purple-a-10);
+    border-left: 2px solid var(--astrocyte-purple-a-42);
+    background: var(--surface-card-frost);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     box-shadow:
@@ -570,16 +570,16 @@
   }
 
   .mm-card:hover {
-    border-color: rgba(187, 154, 247, 0.2);
-    border-left-color: rgba(187, 154, 247, 0.65);
+    border-color: var(--astrocyte-purple-a-20);
+    border-left-color: var(--astrocyte-purple-a-65);
     box-shadow:
-      0 0 0 1px rgba(187, 154, 247, 0.06) inset,
+      0 0 0 1px var(--astrocyte-purple-a-06) inset,
       0 6px 24px rgba(0, 0, 0, 0.45);
   }
 
   .mm-card-chrome {
     position: relative;
-    padding: 28px 10px 10px 12px;
+    padding: calc(var(--space-4) + var(--space-3)) var(--space-3) var(--space-3) var(--space-3);
   }
 
   .mm-card-textarea {
@@ -597,7 +597,7 @@
     font: inherit;
     font-size: 12px;
     line-height: 1.5;
-    caret-color: #bb9af7;
+    caret-color: var(--astrocyte-neural-purple);
   }
 
   .mm-card-textarea::placeholder {
@@ -606,8 +606,8 @@
 
   .focus-context-label {
     display: block;
-    margin-top: 6px;
-    padding: 0 2px 0 0;
+    margin-top: var(--space-2);
+    padding: 0 var(--radius-xs) 0 0;
     text-align: right;
     font-family: var(--font-mono);
     font-size: 0.7em;
@@ -620,10 +620,10 @@
   /* 与主界面聊天消息 .msg-actions / .msg-action (E/D/R) 对齐；略内缩避免贴边 */
   .mm-card-actions {
     position: absolute;
-    top: 7px;
-    right: 8px;
+    top: var(--space-2);
+    right: var(--space-2);
     display: inline-flex;
-    gap: 4px;
+    gap: var(--space-1);
     opacity: 0;
     pointer-events: none;
     transition: opacity 120ms ease;
@@ -641,10 +641,10 @@
     height: 14px;
     margin: 0;
     padding: 0;
-    border: 1px solid rgba(187, 154, 247, 0.45);
+    border: 1px solid var(--astrocyte-purple-a-45);
     border-radius: 0;
-    background: rgba(10, 10, 15, 0.88);
-    color: #bb9af7;
+    background: var(--surface-chrome-88);
+    color: var(--astrocyte-neural-purple);
     font-family: var(--font-mono);
     font-size: 9px;
     line-height: 1;
@@ -655,7 +655,7 @@
   }
 
   .mm-action:hover {
-    border-color: rgba(187, 154, 247, 0.8);
+    border-color: var(--astrocyte-purple-a-80);
   }
 
   .mm-action:disabled {

@@ -2,10 +2,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use std::collections::HashMap;
+use std::sync::RwLock as SyncRwLock;
 
+use crate::config::ChimeraConfig;
 use crate::persona::{self, PersonaConfig};
 use crate::scratchpad::{load_scratchpad_notes, ScratchpadNote};
-use crate::settings::{load_astrocyte_config, AstrocyteConfig};
+use crate::settings::{
+    load_astrocyte_config, normalize_astrocyte_with_chimera, save_astrocyte_config, AstrocyteConfig,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
@@ -19,6 +23,8 @@ pub struct Session {
 }
 
 pub struct AstrocyteState {
+    /// 与 Python 共用 `~/.chimera/config.toml`；可通过 `reload_chimera_config` 热重载。
+    pub chimera: SyncRwLock<ChimeraConfig>,
     pub sessions: RwLock<HashMap<String, Session>>,
     pub config: RwLock<AstrocyteConfig>,
     pub active_persona: RwLock<PersonaConfig>,
@@ -27,12 +33,19 @@ pub struct AstrocyteState {
 }
 
 impl AstrocyteState {
-    pub fn new() -> Self {
+    pub fn new(chimera: ChimeraConfig) -> Self {
         let active_persona =
             persona::load_active_persona().unwrap_or_else(|_| persona::default_active_persona());
+        let mut ui_config = load_astrocyte_config().unwrap_or_default();
+        let before = ui_config.clone();
+        normalize_astrocyte_with_chimera(&mut ui_config, &chimera);
+        if ui_config != before {
+            let _ = save_astrocyte_config(&ui_config);
+        }
         Self {
+            chimera: SyncRwLock::new(chimera),
             sessions: RwLock::new(HashMap::new()),
-            config: RwLock::new(load_astrocyte_config()),
+            config: RwLock::new(ui_config),
             active_persona: RwLock::new(active_persona),
             abort_token: RwLock::new(None),
             scratchpad_notes: RwLock::new(load_scratchpad_notes()),

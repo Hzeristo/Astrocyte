@@ -10,7 +10,6 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 const MEMORY_PATH_ENV_KEY: &str = "ASTROCYTE_MEMORY_PATH";
-const DEFAULT_APP_DIR: &str = "chimera";
 const DEFAULT_HISTORY_SUBDIR: &str = "history";
 const SESSIONS_SUBDIR: &str = "sessions";
 const LEGACY_MEMORY_FILE: &str = "astrocyte_memory.jsonl";
@@ -27,9 +26,7 @@ fn get_memory_base_dir() -> Result<PathBuf, String> {
         }
     }
 
-    let mut default_path = dirs::data_local_dir()
-        .ok_or_else(|| "cannot find OS local data directory".to_string())?;
-    default_path.push(DEFAULT_APP_DIR);
+    let mut default_path = crate::platform::get_chimera_root()?;
     default_path.push(DEFAULT_HISTORY_SUBDIR);
     fs::create_dir_all(&default_path)
         .map_err(|e| format!("failed to create default memory directory: {}", e))?;
@@ -175,7 +172,7 @@ fn migrate_legacy_if_exists() -> Result<(), String> {
             Ok(value) => value,
             Err(err) => {
                 eprintln!(
-                    "[astrocyte] skip malformed legacy line {}: {}",
+                    "[Astrocyte] skip malformed legacy line {}: {}",
                     line_index + 1,
                     err
                 );
@@ -395,7 +392,7 @@ pub fn get_entries_for_session(session_id: &str) -> Result<Vec<ChatEntry>, Strin
             Ok(v) => v,
             Err(err) => {
                 eprintln!(
-                    "[astrocyte] skip malformed session line {}: {}",
+                    "[Astrocyte] skip malformed session line {}: {}",
                     line_index + 1,
                     err
                 );
