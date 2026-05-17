@@ -2,6 +2,8 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import ActiveTaskPanel from '$lib/ActiveTaskPanel.svelte';
+  import ActiveToolTelemetry from '$lib/ActiveToolTelemetry.svelte';
   import { marked } from 'marked';
   import markedKatex from 'marked-katex-extension';
   import DOMPurify from 'dompurify';
@@ -1862,6 +1864,8 @@
 <svelte:window on:click={closeQuickSwitchDropdowns} />
 
 <main class="hud-shell">
+  <ActiveTaskPanel />
+  <ActiveToolTelemetry />
   <div class="hud-main">
     <header class="hud-header" data-tauri-drag-region>
       <span class="hud-header-brand">[ BB_CHANNEL :: ASTROCYTE GATEWAY ]</span>

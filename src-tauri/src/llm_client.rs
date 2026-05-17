@@ -304,6 +304,24 @@ pub async fn stream_oligo_agent(
                                 .map_err(|e| format!("emit failed: {}", e))?;
                             return Ok(None);
                         }
+                        if msg.event == "bb-tool-start" || msg.event == "bb-tool-done" {
+                            let payload: serde_json::Value = if data.is_empty() {
+                                serde_json::json!({})
+                            } else {
+                                serde_json::from_str(data).unwrap_or_else(|_| {
+                                    serde_json::json!({ "raw": data })
+                                })
+                            };
+                            let ev = if msg.event == "bb-tool-start" {
+                                "bb-tool-start"
+                            } else {
+                                "bb-tool-done"
+                            };
+                            app_handle
+                                .emit(ev, payload)
+                                .map_err(|e| format!("emit {} failed: {}", ev, e))?;
+                            continue;
+                        }
                         if data == "[DONE]" {
                             break;
                         }

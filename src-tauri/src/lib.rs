@@ -20,6 +20,7 @@ mod skill_stats;
 mod skills;
 mod stage_stats;
 mod persona;
+mod task_stream;
 pub mod config;
 pub mod platform;
 mod settings;
@@ -28,7 +29,8 @@ use persona::{PersonaConfig, PersonaSnapshot};
 use serde::{Deserialize, Serialize};
 use config::ChimeraConfig;
 use settings::{
-    normalize_astrocyte_with_chimera, resolve_active_provider_runtime, save_astrocyte_config,
+    load_astrocyte_config, normalize_astrocyte_with_chimera, resolve_active_provider_runtime,
+    save_astrocyte_config,
     AstrocyteConfig,
 };
 use skills::SkillWithStats;
@@ -1381,6 +1383,23 @@ pub fn run() {
             if let Err(e) = memory::ensure_migration() {
                 eprintln!("[Astrocyte] legacy memory migration failed (non-fatal): {}", e);
             }
+
+            let app_handle = app.handle().clone();
+            let chimera_snapshot = {
+                let app_state = app.state::<AstrocyteState>();
+                let chimera_guard = app_state
+                    .chimera
+                    .read()
+                    .expect("chimera config lock poisoned");
+                chimera_guard.clone()
+            };
+            let ui_snapshot = load_astrocyte_config().unwrap_or_default();
+            let oligo_base_url =
+                settings::effective_oligo_base_url(&ui_snapshot, &chimera_snapshot);
+            tauri::async_runtime::spawn(async move {
+                task_stream::run_task_stream_loop(app_handle, oligo_base_url).await;
+            });
+
             // 注册全局快捷键 CommandOrControl+Space，失败时仅打印警告，不阻塞启动
             if let Err(e) = app.global_shortcut().on_shortcut(
                 "CommandOrControl+Space",

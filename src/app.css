@@ -1179,3 +1179,122 @@ html.timeline-route-host .fade-container.visible {
   word-wrap: break-word;
   white-space: pre-wrap;
 }
+
+/* Active task overlay panel (Task SSE stream) */
+.active-task-panel {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 320px;
+  max-width: calc(100vw - var(--space-6));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-hud);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1000;
+  box-sizing: border-box;
+}
+
+.task-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-left: 2px solid var(--astrocyte-neural-purple);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+}
+
+.task-row.status-completed {
+  border-left-color: var(--feedback-good);
+}
+
+.task-row.status-failed {
+  border-left-color: var(--error);
+}
+
+.task-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.task-type {
+  font-family: var(--font-mono);
+  font-size: var(--font-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--astrocyte-purple-a-86);
+  white-space: nowrap;
+}
+
+.task-stage {
+  font-family: var(--font-body);
+  font-size: var(--font-sm);
+  color: var(--astrocyte-read-fg);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-elapsed {
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  color: var(--astrocyte-neural-purple);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task-progress-bar {
+  width: 100%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--surface-progress-track);
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--astrocyte-accent-violet),
+    var(--astrocyte-accent-cyan)
+  );
+  transition: width 0.3s ease;
+}
+
+.task-error {
+  font-family: var(--font-mono);
+  font-size: var(--font-xs);
+  color: var(--error-fg);
+  word-break: break-word;
+}
+
+/* Per-tool invoke telemetry (IR.3, Oligo agent SSE; session-scoped) */
+.active-tool-telemetry {
+  position: fixed;
+  top: calc(var(--space-4) + 168px);
+  right: var(--space-4);
+  width: 320px;
+  max-width: calc(100vw - var(--space-6));
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-hud);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-sizing: border-box;
+  pointer-events: none;
+}
